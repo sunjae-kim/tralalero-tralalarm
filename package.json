@@ -1,0 +1,64 @@
+{
+  "name": "tralalero-tralarm",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "start": "electron .",
+    "electron:dev": "concurrently \"npm run dev\" \"electron .\"",
+    "electron:build": "npm run build && electron-builder",
+    "electron:preview": "npm run build && electron ."
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.1.4",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
+    "electron-is-dev": "^3.0.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^4.1.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.22.0",
+    "@types/electron": "^1.4.38",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "electron": "^35.2.0",
+    "electron-builder": "^26.0.12",
+    "eslint": "^9.22.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.19",
+    "globals": "^16.0.0",
+    "typescript": "~5.7.2",
+    "typescript-eslint": "^8.26.1",
+    "vite": "^6.3.1"
+  },
+  "build": {
+    "appId": "com.tralalero.tralarm",
+    "productName": "Tralalero Tralalarm",
+    "files": [
+      "dist/**/*",
+      "main.js"
+    ],
+    "directories": {
+      "buildResources": "assets",
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.utilities"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "deb"
+    }
+  }
+}

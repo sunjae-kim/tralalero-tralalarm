@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: "OtherHand";
+  src: url("/fonts/OtherHand.otf") format("opentype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  --font-otherhand: "OtherHand", sans-serif;
+}
