@@ -1,151 +1,21 @@
 import clsx from "clsx";
 import { format } from "date-fns";
-import { useEffect, useRef, useState } from "react";
-
-const soundOptions = [
-  {
-    id: "tralalero",
-    name: "Tralalero Tralala",
-    file: "/sound/tralalero-tralala.mp3",
-  },
-  {
-    id: "brr-long",
-    name: "Brr Brr Patapim (Long)",
-    file: "/sound/brr-long.mp3",
-  },
-  {
-    id: "brr-short",
-    name: "Brr Brr Patapim (Short)",
-    file: "/sound/brr-short.mp3",
-  },
-];
-
-// Helper functions for localStorage
-const getStoredMinute = (): number | null => {
-  try {
-    const stored = localStorage.getItem("tralalarm-selected-minute");
-    return stored ? parseInt(stored, 10) : null;
-  } catch {
-    return null;
-  }
-};
-
-const getStoredSound = (): string => {
-  try {
-    const stored = localStorage.getItem("tralalarm-selected-sound");
-    return stored && soundOptions.find(option => option.id === stored) 
-      ? stored 
-      : soundOptions[0].id;
-  } catch {
-    return soundOptions[0].id;
-  }
-};
+import { useAlarmClock } from "./hooks";
+import { SOUND_OPTIONS } from "./constants";
+import { SoundSelector } from "./components/SoundSelector";
 
 function App() {
-  const [currentTime, setCurrentTime] = useState(new Date());
-  const [selectedMinute, setSelectedMinute] = useState<number | null>(getStoredMinute());
-  const [selectedSound, setSelectedSound] = useState(getStoredSound());
-  const [isAlarmPlaying, setIsAlarmPlaying] = useState(false);
-  const [isSoundSelectorOpen, setIsSoundSelectorOpen] = useState(false);
-
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const lastPlayedMinute = useRef<number | null>(null);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, []);
-
-  // Save selected minute to localStorage when it changes
-  useEffect(() => {
-    try {
-      if (selectedMinute !== null) {
-        localStorage.setItem("tralalarm-selected-minute", selectedMinute.toString());
-      } else {
-        localStorage.removeItem("tralalarm-selected-minute");
-      }
-    } catch (error) {
-      console.warn("Failed to save selected minute to localStorage:", error);
-    }
-  }, [selectedMinute]);
-
-  // Save selected sound to localStorage when it changes
-  useEffect(() => {
-    try {
-      localStorage.setItem("tralalarm-selected-sound", selectedSound);
-    } catch (error) {
-      console.warn("Failed to save selected sound to localStorage:", error);
-    }
-  }, [selectedSound]);
-
-  useEffect(() => {
-    const currentMinute = currentTime.getMinutes();
-
-    if (
-      selectedMinute !== null &&
-      currentMinute === selectedMinute &&
-      lastPlayedMinute.current !== currentMinute
-    ) {
-      if (audioRef.current) {
-        audioRef.current.play();
-        setIsAlarmPlaying(true);
-        lastPlayedMinute.current = currentMinute;
-      }
-    }
-
-    if (
-      lastPlayedMinute.current !== null &&
-      lastPlayedMinute.current !== currentMinute
-    ) {
-      lastPlayedMinute.current = null;
-      setIsAlarmPlaying(false);
-    }
-  }, [currentTime, selectedMinute]);
-
-  useEffect(() => {
-    const currentAudio = audioRef.current;
-    if (currentAudio) {
-      currentAudio.onended = () => {
-        setIsAlarmPlaying(false);
-      };
-    }
-
-    return () => {
-      if (currentAudio) {
-        currentAudio.onended = null;
-      }
-    };
-  }, []);
-
-  const handleMinuteChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = parseInt(e.target.value, 10);
-    setSelectedMinute(isNaN(value) ? null : value);
-  };
-
-  const handleSoundChange = (soundId: string) => {
-    setSelectedSound(soundId);
-    setIsSoundSelectorOpen(false);
-  };
-
-  const toggleSoundSelector = () => {
-    setIsSoundSelectorOpen(!isSoundSelectorOpen);
-  };
-
-  // Close sound selector when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as Element;
-      if (isSoundSelectorOpen && !target.closest(".sound-selector-container")) {
-        setIsSoundSelectorOpen(false);
-      }
-    };
-
-    document.addEventListener("click", handleClickOutside);
-    return () => document.removeEventListener("click", handleClickOutside);
-  }, [isSoundSelectorOpen]);
+  const {
+    currentTime,
+    selectedMinute,
+    selectedSound,
+    isAlarmPlaying,
+    audioRef,
+    previewAudioRef,
+    handleMinuteChange,
+    handleSoundChange,
+    previewSound,
+  } = useAlarmClock();
 
   const minutes = Array.from({ length: 60 }, (_, i) => i);
 
@@ -187,10 +57,18 @@ function App() {
           </p>
         </div>
 
-        <audio
-          ref={audioRef}
-          src={soundOptions.find((option) => option.id === selectedSound)?.file}
-        />
+        {!SOUND_OPTIONS.find((option) => option.id === selectedSound)
+          ?.isNotification && (
+          <audio
+            ref={audioRef}
+            src={
+              SOUND_OPTIONS.find((option) => option.id === selectedSound)?.file
+            }
+          />
+        )}
+
+        {/* Preview audio element */}
+        <audio ref={previewAudioRef} />
 
         <div className={isAlarmPlaying ? "visible" : "invisible"}>
           <div
@@ -217,60 +95,11 @@ function App() {
         ></script>
       </div>
 
-      {/* Sound selector button */}
-      <div className="fixed bottom-5 left-5 sound-selector-container">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={toggleSoundSelector}
-            className="p-3 size-12 rounded-full bg-white shadow-lg hover:bg-gray-50 transition-colors cursor-pointer"
-            title="Select alarm sound"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="size-6"
-            >
-              <polygon points="11 5,6 9,2 9,2 15,6 15,11 19,11 5" />
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-              <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-            </svg>
-          </button>
-          <div className="bg-white px-3 py-2 rounded-lg shadow-lg">
-            <span className="text-sm font-medium text-gray-700">
-              {soundOptions.find((option) => option.id === selectedSound)?.name}
-            </span>
-          </div>
-        </div>
-
-        {/* Sound selection modal */}
-        {isSoundSelectorOpen && (
-          <div className="absolute bottom-14 left-0 bg-white rounded-lg shadow-xl border p-2 min-w-[200px]">
-            <div className="text-sm font-semibold text-gray-700 mb-2 px-2">
-              Select Alarm Sound
-            </div>
-            {soundOptions.map((option) => (
-              <button
-                key={option.id}
-                onClick={() => handleSoundChange(option.id)}
-                className={clsx(
-                  "w-full text-left px-3 py-2 rounded hover:bg-gray-100 transition-colors text-sm cursor-pointer",
-                  selectedSound === option.id && "bg-blue-50 text-blue-700"
-                )}
-              >
-                {option.name}
-                {selectedSound === option.id && (
-                  <span className="float-right">✓</span>
-                )}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      <SoundSelector
+        selectedSound={selectedSound}
+        onSoundChange={handleSoundChange}
+        onPreviewSound={previewSound}
+      />
 
       {/* GitHub link */}
       <div className="fixed bottom-5 right-5">
