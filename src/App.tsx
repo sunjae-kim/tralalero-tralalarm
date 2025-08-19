@@ -20,10 +20,31 @@ const soundOptions = [
   },
 ];
 
+// Helper functions for localStorage
+const getStoredMinute = (): number | null => {
+  try {
+    const stored = localStorage.getItem("tralalarm-selected-minute");
+    return stored ? parseInt(stored, 10) : null;
+  } catch {
+    return null;
+  }
+};
+
+const getStoredSound = (): string => {
+  try {
+    const stored = localStorage.getItem("tralalarm-selected-sound");
+    return stored && soundOptions.find(option => option.id === stored) 
+      ? stored 
+      : soundOptions[0].id;
+  } catch {
+    return soundOptions[0].id;
+  }
+};
+
 function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [selectedMinute, setSelectedMinute] = useState<number | null>(null);
-  const [selectedSound, setSelectedSound] = useState(soundOptions[0].id);
+  const [selectedMinute, setSelectedMinute] = useState<number | null>(getStoredMinute());
+  const [selectedSound, setSelectedSound] = useState(getStoredSound());
   const [isAlarmPlaying, setIsAlarmPlaying] = useState(false);
   const [isSoundSelectorOpen, setIsSoundSelectorOpen] = useState(false);
 
@@ -37,6 +58,28 @@ function App() {
 
     return () => clearInterval(timer);
   }, []);
+
+  // Save selected minute to localStorage when it changes
+  useEffect(() => {
+    try {
+      if (selectedMinute !== null) {
+        localStorage.setItem("tralalarm-selected-minute", selectedMinute.toString());
+      } else {
+        localStorage.removeItem("tralalarm-selected-minute");
+      }
+    } catch (error) {
+      console.warn("Failed to save selected minute to localStorage:", error);
+    }
+  }, [selectedMinute]);
+
+  // Save selected sound to localStorage when it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem("tralalarm-selected-sound", selectedSound);
+    } catch (error) {
+      console.warn("Failed to save selected sound to localStorage:", error);
+    }
+  }, [selectedSound]);
 
   useEffect(() => {
     const currentMinute = currentTime.getMinutes();
