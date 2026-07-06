@@ -20,6 +20,30 @@ export const SOUND_OPTIONS: SoundOption[] = [
     isNotification: false,
   },
   {
+    id: "bright-chime-short",
+    name: "Bright Chime (Short)",
+    file: "/sound/bright-chime-short.wav",
+    isNotification: false,
+  },
+  {
+    id: "double-beep-clear",
+    name: "Double Beep (Clear)",
+    file: "/sound/double-beep-clear.wav",
+    isNotification: false,
+  },
+  {
+    id: "triple-wake-beep",
+    name: "Triple Wake Beep",
+    file: "/sound/triple-wake-beep.wav",
+    isNotification: false,
+  },
+  {
+    id: "ascending-ping-alert",
+    name: "Ascending Ping Alert",
+    file: "/sound/ascending-ping-alert.wav",
+    isNotification: false,
+  },
+  {
     id: "notification",
     name: "Browser Notification",
     file: "",
