@@ -5,6 +5,7 @@ import {
   parseStoredMinute,
 } from "./alarmTime";
 import { AudioAlarmScheduler } from "./audioAlarmScheduler";
+import { AlarmStatus } from "./alarmStatus";
 import { SOUND_OPTIONS } from "./constants";
 import {
   createAlarmNotification,
@@ -15,13 +16,6 @@ import {
   saveMinuteToStorage,
   saveSoundToStorage,
 } from "./utils";
-
-export type AlarmStatus =
-  | "disabled"
-  | "needs-interaction"
-  | "arming"
-  | "ready"
-  | "error";
 
 const AUDIO_SCHEDULE_OCCURRENCES = 48;
 const ALARM_VISUAL_DURATION_MS = 5_000;
@@ -36,7 +30,6 @@ export const useAlarmClock = () => {
   const [alarmStatus, setAlarmStatus] = useState<AlarmStatus>(
     selectedMinute === null ? "disabled" : "needs-interaction"
   );
-  const [alarmError, setAlarmError] = useState<string | null>(null);
   const [nextAlarmTime, setNextAlarmTime] = useState<Date | null>(() =>
     selectedMinute === null ? null : getNextAlarmTime(new Date(), selectedMinute)
   );
@@ -85,12 +78,10 @@ export const useAlarmClock = () => {
         (option) => option.id === soundId
       );
 
-      setAlarmError(null);
       const nextAlarm = setNextAlarm(new Date(), minute);
 
       if (!scheduler || !selectedOption) {
         setAlarmStatus("error");
-        setAlarmError("The selected alarm sound is unavailable.");
         return Promise.resolve();
       }
 
@@ -129,9 +120,6 @@ export const useAlarmClock = () => {
                 setAlarmStatus("ready");
               } else {
                 setAlarmStatus("error");
-                setAlarmError(
-                  "Allow browser notifications, then enable the alarm again."
-                );
               }
               return;
             }
@@ -162,9 +150,6 @@ export const useAlarmClock = () => {
             }
             console.warn("Failed to arm alarm:", error);
             setAlarmStatus("error");
-            setAlarmError(
-              "The browser blocked alarm audio. Click Enable Alarm and try again."
-            );
           }
         });
 
@@ -217,9 +202,6 @@ export const useAlarmClock = () => {
           .catch((error) => {
             console.warn("Failed to play alarm audio:", error);
             setAlarmStatus("error");
-            setAlarmError(
-              "The browser blocked alarm audio. Click Enable Alarm and try again."
-            );
           });
       }
 
@@ -262,9 +244,6 @@ export const useAlarmClock = () => {
               }
               console.warn("Failed to refill alarm schedule:", error);
               setAlarmStatus("needs-interaction");
-              setAlarmError(
-                "Alarm audio was interrupted. Click Enable Alarm to restore exact scheduling."
-              );
             }
           });
         armQueueRef.current = refillOperation;
@@ -314,6 +293,32 @@ export const useAlarmClock = () => {
   }, [selectedSound]);
 
   useEffect(() => {
+    const needsActivation =
+      selectedMinute !== null &&
+      (alarmStatus === "needs-interaction" || alarmStatus === "error");
+
+    if (!needsActivation) {
+      return;
+    }
+
+    let handled = false;
+    const activateFromFirstGesture = () => {
+      if (handled || selectedMinuteRef.current === null) {
+        return;
+      }
+      handled = true;
+      void armAlarm(selectedMinuteRef.current, selectedSoundRef.current);
+    };
+
+    document.addEventListener("pointerdown", activateFromFirstGesture, true);
+    document.addEventListener("keydown", activateFromFirstGesture, true);
+    return () => {
+      document.removeEventListener("pointerdown", activateFromFirstGesture, true);
+      document.removeEventListener("keydown", activateFromFirstGesture, true);
+    };
+  }, [alarmStatus, armAlarm, selectedMinute]);
+
+  useEffect(() => {
     const handleResume = () => {
       const now = new Date();
       setCurrentTime(now);
@@ -332,7 +337,7 @@ export const useAlarmClock = () => {
         hasUserEnabledAlarmRef.current
       ) {
         // A previously enabled context may have been suspended/closed while the
-        // page was hidden. Retry it on resume; failure exposes Enable Alarm.
+        // page was hidden. Retry it on resume; failure exposes the tap hint.
         void armAlarm(minute, soundId);
       }
     };
@@ -380,9 +385,6 @@ export const useAlarmClock = () => {
         hasUserEnabledAlarmRef.current
       ) {
         setAlarmStatus("needs-interaction");
-        setAlarmError(
-          "Alarm audio was paused by the browser. Re-enable it to restore exact scheduling."
-        );
       }
     });
 
@@ -408,7 +410,6 @@ export const useAlarmClock = () => {
       nextAlarmAtRef.current = null;
       setNextAlarmTime(null);
       setAlarmStatus("disabled");
-      setAlarmError(null);
       return;
     }
 
@@ -421,12 +422,6 @@ export const useAlarmClock = () => {
 
     if (selectedMinuteRef.current !== null) {
       void armAlarm(selectedMinuteRef.current, soundId);
-    }
-  };
-
-  const enableAlarm = () => {
-    if (selectedMinuteRef.current !== null) {
-      void armAlarm(selectedMinuteRef.current, selectedSoundRef.current);
     }
   };
 
@@ -457,13 +452,11 @@ export const useAlarmClock = () => {
     selectedSound,
     isAlarmPlaying,
     alarmStatus,
-    alarmError,
     nextAlarmTime,
     audioRef,
     previewAudioRef,
     handleMinuteChange,
     handleSoundChange,
-    enableAlarm,
     previewSound,
   };
 };

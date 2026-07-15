@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { format } from "date-fns";
 import { useAlarmClock } from "./hooks";
+import { getAlarmStatusMessage } from "./alarmStatus";
 import { SOUND_OPTIONS } from "./constants";
 import { SoundSelector } from "./components/SoundSelector";
 import { LoadingSpinner } from "./components/LoadingSpinner";
@@ -13,21 +14,23 @@ function App() {
     selectedSound,
     isAlarmPlaying,
     alarmStatus,
-    alarmError,
     nextAlarmTime,
     audioRef,
     previewAudioRef,
     handleMinuteChange,
     handleSoundChange,
-    enableAlarm,
     previewSound,
   } = useAlarmClock();
 
   const isFontLoaded = useFontLoading("OtherHand");
   const minutes = Array.from({ length: 60 }, (_, i) => i);
+  const alarmStatusMessage = getAlarmStatusMessage(
+    alarmStatus,
+    nextAlarmTime
+  );
 
   return (
-    <div className="flex h-screen w-full items-center justify-center bg-gray-100 font-otherhand">
+    <div className="flex min-h-[100dvh] w-full items-center justify-center bg-gray-100 font-otherhand">
       {/* Loading Spinner */}
       {!isFontLoaded && (
         <div className="fade-in-container loaded fixed inset-0 flex items-center justify-center">
@@ -37,7 +40,7 @@ function App() {
 
       {/* Main Content */}
       <div className={clsx("fade-in-container", isFontLoaded && "loaded")}>
-        <div className="text-center w-[200px] mt-10">
+        <div className="mt-6 w-[240px] max-w-[84vw] text-center">
           <h1 className="text-6xl font-bold text-gray-800">
             {format(currentTime, "HH:mm:ss")}
           </h1>
@@ -53,7 +56,7 @@ function App() {
               id="minute-select"
               value={selectedMinute === null ? "" : selectedMinute}
               onChange={handleMinuteChange}
-              className="px-4 py-2 rounded-md border border-gray-300 text-xl"
+              className="min-w-[140px] rounded-md border border-gray-300 bg-white px-4 py-2 text-center text-xl text-gray-800 shadow-sm outline-none transition-colors focus:border-gray-500"
             >
               <option value="">Select Minute</option>
               {minutes.map((minute) => (
@@ -64,44 +67,18 @@ function App() {
             </select>
 
             <p
+              aria-live="polite"
               className={clsx(
-                "mt-2 text-lg text-green-600",
-                selectedMinute !== null ? "visible" : "invisible"
+                "mt-3 min-h-6 text-base leading-6",
+                alarmStatus === "ready" && "text-green-600",
+                alarmStatus === "error" && "text-red-500",
+                alarmStatus !== "ready" &&
+                  alarmStatus !== "error" &&
+                  "text-gray-500"
               )}
             >
-              Alarm will sound at minute {selectedMinute}
+              {alarmStatusMessage || "\u00a0"}
             </p>
-
-            {selectedMinute !== null && (
-              <div className="mt-3 flex flex-col items-center gap-2 text-sm">
-                {alarmStatus === "ready" && nextAlarmTime && (
-                  <p className="font-sans text-green-700">
-                    Alarm ready for {format(nextAlarmTime, "HH:mm:ss")}
-                  </p>
-                )}
-
-                {alarmStatus === "arming" && (
-                  <p className="font-sans text-gray-500">Preparing alarm sound…</p>
-                )}
-
-                {(alarmStatus === "needs-interaction" ||
-                  alarmStatus === "error") && (
-                  <button
-                    type="button"
-                    onClick={enableAlarm}
-                    className="rounded-md bg-gray-800 px-4 py-2 font-sans text-sm font-semibold text-white shadow-sm transition-colors hover:bg-gray-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-800"
-                  >
-                    Enable Alarm
-                  </button>
-                )}
-
-                {alarmError && (
-                  <p className="max-w-[240px] font-sans text-xs leading-5 text-red-600">
-                    {alarmError}
-                  </p>
-                )}
-              </div>
-            )}
           </div>
 
           {!SOUND_OPTIONS.find((option) => option.id === selectedSound)
