@@ -7,6 +7,15 @@ const assertValidMinute = (minute: number) => {
   }
 };
 
+export const parseStoredMinute = (value: string | null): number | null => {
+  if (value === null || !/^\d{1,2}$/.test(value)) {
+    return null;
+  }
+
+  const minute = Number(value);
+  return minute >= MINUTE_MIN && minute <= MINUTE_MAX ? minute : null;
+};
+
 export const getNextAlarmTime = (now: Date, selectedMinute: number): Date => {
   assertValidMinute(selectedMinute);
 

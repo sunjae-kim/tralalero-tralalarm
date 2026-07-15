@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   didCrossAlarmTime,
   getNextAlarmTime,
+  parseStoredMinute,
 } from "./alarmTime";
 
 describe("getNextAlarmTime", () => {
@@ -23,6 +24,22 @@ describe("getNextAlarmTime", () => {
 
     expect(nextAlarm.getHours()).toBe(11);
     expect(nextAlarm.getMinutes()).toBe(0);
+  });
+});
+
+describe("parseStoredMinute", () => {
+  it("accepts persisted integer minutes including zero", () => {
+    expect(parseStoredMinute("0")).toBe(0);
+    expect(parseStoredMinute("59")).toBe(59);
+  });
+
+  it("rejects malformed and out-of-range persisted values", () => {
+    expect(parseStoredMinute(null)).toBeNull();
+    expect(parseStoredMinute("")).toBeNull();
+    expect(parseStoredMinute("3.5")).toBeNull();
+    expect(parseStoredMinute("abc")).toBeNull();
+    expect(parseStoredMinute("-1")).toBeNull();
+    expect(parseStoredMinute("60")).toBeNull();
   });
 });
 

@@ -1,11 +1,13 @@
 import { format } from "date-fns";
+import { parseStoredMinute } from "./alarmTime";
 import { SOUND_OPTIONS, STORAGE_KEYS } from "./constants";
 
 // localStorage helper functions
 export const getStoredMinute = (): number | null => {
   try {
-    const stored = localStorage.getItem(STORAGE_KEYS.SELECTED_MINUTE);
-    return stored ? parseInt(stored, 10) : null;
+    return parseStoredMinute(
+      localStorage.getItem(STORAGE_KEYS.SELECTED_MINUTE)
+    );
   } catch {
     return null;
   }

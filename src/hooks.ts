@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getNextAlarmTime, didCrossAlarmTime } from "./alarmTime";
+import {
+  didCrossAlarmTime,
+  getNextAlarmTime,
+  parseStoredMinute,
+} from "./alarmTime";
 import { AudioAlarmScheduler } from "./audioAlarmScheduler";
 import { SOUND_OPTIONS } from "./constants";
 import {
@@ -47,6 +51,7 @@ export const useAlarmClock = () => {
   );
   const previousCheckAtRef = useRef(Date.now());
   const armVersionRef = useRef(0);
+  const hasUserEnabledAlarmRef = useRef(false);
   const armQueueRef = useRef<Promise<void>>(Promise.resolve());
   const visualTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -92,17 +97,25 @@ export const useAlarmClock = () => {
       scheduler.cancel();
       setAlarmStatus("arming");
 
-      // Start permission-sensitive work immediately while this function is still
-      // running inside the user's click/change gesture.
-      const activationPromise = selectedOption.isNotification
-        ? requestNotificationPermission()
-        : scheduler.enable();
+      // Attach both resolve and reject handlers immediately so permission/audio
+      // failures cannot become temporarily unhandled while prior arm work drains.
+      const activationResultPromise = (
+        selectedOption.isNotification
+          ? requestNotificationPermission()
+          : scheduler.enable()
+      ).then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error })
+      );
 
       const operation = armQueueRef.current
         .catch(() => undefined)
         .then(async () => {
           try {
-            await activationPromise;
+            const activationResult = await activationResultPromise;
+            if (!activationResult.ok) {
+              throw activationResult.error;
+            }
             if (version !== armVersionRef.current) {
               return;
             }
@@ -112,6 +125,7 @@ export const useAlarmClock = () => {
                 "Notification" in window &&
                 Notification.permission === "granted"
               ) {
+                hasUserEnabledAlarmRef.current = true;
                 setAlarmStatus("ready");
               } else {
                 setAlarmStatus("error");
@@ -122,7 +136,7 @@ export const useAlarmClock = () => {
               return;
             }
 
-            await scheduler.scheduleHourly(
+            const scheduledAlarmTimes = await scheduler.scheduleHourly(
               selectedOption.file,
               nextAlarm.getTime(),
               AUDIO_SCHEDULE_OCCURRENCES
@@ -133,6 +147,14 @@ export const useAlarmClock = () => {
               return;
             }
 
+            const firstScheduledAlarm = scheduledAlarmTimes[0];
+            if (firstScheduledAlarm === undefined) {
+              throw new Error("No alarm occurrence was scheduled.");
+            }
+
+            nextAlarmAtRef.current = firstScheduledAlarm;
+            setNextAlarmTime(new Date(firstScheduledAlarm));
+            hasUserEnabledAlarmRef.current = true;
             setAlarmStatus("ready");
           } catch (error) {
             if (version !== armVersionRef.current) {
@@ -165,6 +187,9 @@ export const useAlarmClock = () => {
       }
 
       const lateness = now.getTime() - alarmAt;
+      const scheduler = schedulerRef.current;
+      const wasScheduledByAudioClock =
+        scheduler?.state === "running" && scheduler.isScheduled(alarmAt);
 
       if (selectedOption.isNotification) {
         const notification = createAlarmNotification(now);
@@ -175,14 +200,15 @@ export const useAlarmClock = () => {
           };
           showAlarmVisual();
         }
-      } else if (schedulerRef.current?.isReady) {
-        // Web Audio was scheduled against the hardware audio clock in advance.
-        // The timer only drives the visual state and the next-alarm label.
+      } else if (wasScheduledByAudioClock) {
+        // Only a source confirmed for this specific boundary may suppress the
+        // fallback. A running AudioContext by itself does not prove playback.
         if (lateness < ALARM_VISUAL_DURATION_MS) {
           showAlarmVisual();
         }
       } else if (audioRef.current) {
-        // Catch up after a tab resume if Web Audio was suspended or discarded.
+        // Catch up after a tab resume or failed exact schedule. Report success
+        // only after HTMLMediaElement.play() actually resolves.
         audioRef.current
           .play()
           .then(() => {
@@ -197,7 +223,52 @@ export const useAlarmClock = () => {
           });
       }
 
-      setNextAlarm(now, minute);
+      const nextAlarm = setNextAlarm(now, minute);
+
+      if (
+        !selectedOption.isNotification &&
+        scheduler &&
+        hasUserEnabledAlarmRef.current
+      ) {
+        const refillVersion = armVersionRef.current;
+        const refillOperation = armQueueRef.current
+          .catch(() => undefined)
+          .then(async () => {
+            if (refillVersion !== armVersionRef.current) {
+              return;
+            }
+
+            try {
+              const scheduledAlarmTimes = await scheduler.ensureHourlySchedule(
+                selectedOption.file,
+                nextAlarm.getTime(),
+                AUDIO_SCHEDULE_OCCURRENCES
+              );
+              if (refillVersion !== armVersionRef.current) {
+                return;
+              }
+
+              const firstScheduledAlarm = scheduledAlarmTimes[0];
+              if (
+                firstScheduledAlarm !== undefined &&
+                !scheduler.isScheduled(nextAlarm.getTime())
+              ) {
+                nextAlarmAtRef.current = firstScheduledAlarm;
+                setNextAlarmTime(new Date(firstScheduledAlarm));
+              }
+            } catch (error) {
+              if (refillVersion !== armVersionRef.current) {
+                return;
+              }
+              console.warn("Failed to refill alarm schedule:", error);
+              setAlarmStatus("needs-interaction");
+              setAlarmError(
+                "Alarm audio was interrupted. Click Enable Alarm to restore exact scheduling."
+              );
+            }
+          });
+        armQueueRef.current = refillOperation;
+      }
     },
     [setNextAlarm, showAlarmVisual]
   );
@@ -250,11 +321,18 @@ export const useAlarmClock = () => {
 
       const minute = selectedMinuteRef.current;
       const soundId = selectedSoundRef.current;
+      const selectedOption = SOUND_OPTIONS.find(
+        (option) => option.id === soundId
+      );
       if (
         document.visibilityState === "visible" &&
         minute !== null &&
-        schedulerRef.current?.isReady
+        selectedOption &&
+        !selectedOption.isNotification &&
+        hasUserEnabledAlarmRef.current
       ) {
+        // A previously enabled context may have been suspended/closed while the
+        // page was hidden. Retry it on resume; failure exposes Enable Alarm.
         void armAlarm(minute, soundId);
       }
     };
@@ -282,25 +360,50 @@ export const useAlarmClock = () => {
     };
   }, []);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    const scheduler = schedulerRef.current;
+    if (!scheduler) {
+      return;
+    }
+
+    const unsubscribe = scheduler.onStateChange((state) => {
+      const minute = selectedMinuteRef.current;
+      const selectedOption = SOUND_OPTIONS.find(
+        (option) => option.id === selectedSoundRef.current
+      );
+
+      if (
+        state !== "running" &&
+        minute !== null &&
+        selectedOption &&
+        !selectedOption.isNotification &&
+        hasUserEnabledAlarmRef.current
+      ) {
+        setAlarmStatus("needs-interaction");
+        setAlarmError(
+          "Alarm audio was paused by the browser. Re-enable it to restore exact scheduling."
+        );
+      }
+    });
+
+    return () => {
+      unsubscribe();
       armVersionRef.current += 1;
       if (visualTimerRef.current) {
         clearTimeout(visualTimerRef.current);
       }
-      void schedulerRef.current?.dispose();
-    },
-    []
-  );
+      void scheduler.dispose();
+    };
+  }, []);
 
   const handleMinuteChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = parseInt(event.target.value, 10);
-    const minute = Number.isNaN(value) ? null : value;
+    const minute = parseStoredMinute(event.target.value);
     setSelectedMinute(minute);
     selectedMinuteRef.current = minute;
 
     if (minute === null) {
       armVersionRef.current += 1;
+      hasUserEnabledAlarmRef.current = false;
       schedulerRef.current?.cancel();
       nextAlarmAtRef.current = null;
       setNextAlarmTime(null);
