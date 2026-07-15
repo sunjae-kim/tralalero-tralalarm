@@ -12,10 +12,14 @@ function App() {
     selectedMinute,
     selectedSound,
     isAlarmPlaying,
+    alarmStatus,
+    alarmError,
+    nextAlarmTime,
     audioRef,
     previewAudioRef,
     handleMinuteChange,
     handleSoundChange,
+    enableAlarm,
     previewSound,
   } = useAlarmClock();
 
@@ -62,11 +66,42 @@ function App() {
             <p
               className={clsx(
                 "mt-2 text-lg text-green-600",
-                selectedMinute ? "visible" : "invisible"
+                selectedMinute !== null ? "visible" : "invisible"
               )}
             >
               Alarm will sound at minute {selectedMinute}
             </p>
+
+            {selectedMinute !== null && (
+              <div className="mt-3 flex flex-col items-center gap-2 text-sm">
+                {alarmStatus === "ready" && nextAlarmTime && (
+                  <p className="font-sans text-green-700">
+                    Alarm ready for {format(nextAlarmTime, "HH:mm:ss")}
+                  </p>
+                )}
+
+                {alarmStatus === "arming" && (
+                  <p className="font-sans text-gray-500">Preparing alarm sound…</p>
+                )}
+
+                {(alarmStatus === "needs-interaction" ||
+                  alarmStatus === "error") && (
+                  <button
+                    type="button"
+                    onClick={enableAlarm}
+                    className="rounded-md bg-gray-800 px-4 py-2 font-sans text-sm font-semibold text-white shadow-sm transition-colors hover:bg-gray-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-800"
+                  >
+                    Enable Alarm
+                  </button>
+                )}
+
+                {alarmError && (
+                  <p className="max-w-[240px] font-sans text-xs leading-5 text-red-600">
+                    {alarmError}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {!SOUND_OPTIONS.find((option) => option.id === selectedSound)
