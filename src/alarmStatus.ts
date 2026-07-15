@@ -14,7 +14,7 @@ export const getAlarmStatusMessage = (
   switch (status) {
     case "ready":
       return nextAlarmTime
-        ? `Alarm set for ${format(nextAlarmTime, "HH:mm")}`
+        ? `Next alarm at ${format(nextAlarmTime, "HH:mm")}`
         : "Alarm set";
     case "arming":
       return "Setting alarm...";

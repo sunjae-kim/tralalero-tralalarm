@@ -10,7 +10,7 @@ import { useFontLoading } from "./useFontLoading";
 function App() {
   const {
     currentTime,
-    selectedMinute,
+    selectedMinutes,
     selectedSound,
     isAlarmPlaying,
     alarmStatus,
@@ -45,26 +45,37 @@ function App() {
             {format(currentTime, "HH:mm:ss")}
           </h1>
 
-          <div className="mt-6">
-            <label
-              htmlFor="minute-select"
-              className="block text-xl text-gray-600 mb-2"
-            >
-              Set Alarm Minute:
-            </label>
-            <select
-              id="minute-select"
-              value={selectedMinute === null ? "" : selectedMinute}
-              onChange={handleMinuteChange}
-              className="min-w-[140px] rounded-md border border-gray-300 bg-white px-4 py-2 text-center text-xl text-gray-800 shadow-sm outline-none transition-colors focus:border-gray-500"
-            >
-              <option value="">Select Minute</option>
-              {minutes.map((minute) => (
-                <option key={minute} value={minute}>
-                  {minute.toString().padStart(2, "0")}
-                </option>
+          <fieldset className="mt-6">
+            <legend className="mb-2 block w-full text-xl text-gray-600">
+              Set Alarm Minutes:
+            </legend>
+            <div className="flex items-center justify-center gap-2">
+              {([0, 1] as const).map((slotIndex) => (
+                <select
+                  key={slotIndex}
+                  id={`minute-select-${slotIndex + 1}`}
+                  aria-label={`${slotIndex === 0 ? "First" : "Second"} alarm minute`}
+                  value={
+                    selectedMinutes[slotIndex] === null
+                      ? ""
+                      : selectedMinutes[slotIndex]
+                  }
+                  onChange={(event) => handleMinuteChange(slotIndex, event)}
+                  className="min-w-[88px] rounded-md border border-gray-300 bg-white px-3 py-2 text-center text-xl text-gray-800 shadow-sm outline-none transition-colors focus:border-gray-500"
+                >
+                  <option value="">--</option>
+                  {minutes.map((minute) => (
+                    <option
+                      key={minute}
+                      value={minute}
+                      disabled={selectedMinutes[slotIndex === 0 ? 1 : 0] === minute}
+                    >
+                      {minute.toString().padStart(2, "0")}
+                    </option>
+                  ))}
+                </select>
               ))}
-            </select>
+            </div>
 
             <p
               aria-live="polite"
@@ -79,7 +90,7 @@ function App() {
             >
               {alarmStatusMessage || "\u00a0"}
             </p>
-          </div>
+          </fieldset>
 
           {!SOUND_OPTIONS.find((option) => option.id === selectedSound)
             ?.isNotification && (

@@ -142,6 +142,21 @@ describe("AudioAlarmScheduler", () => {
     expect(scheduler.isScheduled(firstAlarmAt + 3 * HOUR_MS)).toBe(true);
   });
 
+  it("keeps both minute families scheduled for the same sound", async () => {
+    const { scheduler, startedAt, stopped } = createHarness();
+    const nextFifty = 1_030_000;
+    const nextHour = 1_630_000;
+
+    await scheduler.enable();
+    await scheduler.scheduleHourly("/sound/alarm.wav", nextFifty, 2);
+    await scheduler.ensureHourlySchedule("/sound/alarm.wav", nextHour, 2);
+
+    expect(startedAt).toHaveLength(4);
+    expect(stopped).not.toHaveBeenCalled();
+    expect(scheduler.isScheduled(nextFifty)).toBe(true);
+    expect(scheduler.isScheduled(nextHour)).toBe(true);
+  });
+
   it("cancels previously scheduled sources before replacing the sound", async () => {
     const { scheduler, stopped, disconnected } = createHarness();
 

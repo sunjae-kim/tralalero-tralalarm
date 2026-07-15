@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { getAlarmStatusMessage } from "./alarmStatus";
 
 describe("getAlarmStatusMessage", () => {
-  it("uses one concise ready message without repeating the selected minute", () => {
+  it("uses one concise next-occurrence message for one or two alarm minutes", () => {
     const nextAlarm = new Date(2026, 6, 15, 12, 50, 0, 0);
 
     expect(getAlarmStatusMessage("ready", nextAlarm)).toBe(
-      "Alarm set for 12:50"
+      "Next alarm at 12:50"
     );
   });
 

@@ -4,16 +4,21 @@ import {
   getNextAlarmTime,
   parseStoredMinute,
 } from "./alarmTime";
+import {
+  AlarmMinuteSlots,
+  getActiveAlarmMinutes,
+  getNextAlarmOccurrence,
+} from "./alarmMinutes";
 import { AudioAlarmScheduler } from "./audioAlarmScheduler";
 import { AlarmStatus } from "./alarmStatus";
 import { SOUND_OPTIONS } from "./constants";
 import {
   createAlarmNotification,
   createPreviewNotification,
-  getStoredMinute,
+  getStoredMinutes,
   getStoredSound,
   requestNotificationPermission,
-  saveMinuteToStorage,
+  saveMinutesToStorage,
   saveSoundToStorage,
 } from "./utils";
 
@@ -22,22 +27,23 @@ const ALARM_VISUAL_DURATION_MS = 5_000;
 
 export const useAlarmClock = () => {
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [selectedMinute, setSelectedMinute] = useState<number | null>(
-    getStoredMinute()
-  );
+  const [selectedMinutes, setSelectedMinutes] =
+    useState<AlarmMinuteSlots>(getStoredMinutes);
   const [selectedSound, setSelectedSound] = useState(getStoredSound());
   const [isAlarmPlaying, setIsAlarmPlaying] = useState(false);
   const [alarmStatus, setAlarmStatus] = useState<AlarmStatus>(
-    selectedMinute === null ? "disabled" : "needs-interaction"
+    getActiveAlarmMinutes(selectedMinutes).length === 0
+      ? "disabled"
+      : "needs-interaction"
   );
   const [nextAlarmTime, setNextAlarmTime] = useState<Date | null>(() =>
-    selectedMinute === null ? null : getNextAlarmTime(new Date(), selectedMinute)
+    getNextAlarmOccurrence(new Date(), selectedMinutes)
   );
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const schedulerRef = useRef<AudioAlarmScheduler | null>(null);
-  const selectedMinuteRef = useRef(selectedMinute);
+  const selectedMinutesRef = useRef(selectedMinutes);
   const selectedSoundRef = useRef(selectedSound);
   const nextAlarmAtRef = useRef<number | null>(
     nextAlarmTime?.getTime() ?? null
@@ -63,25 +69,29 @@ export const useAlarmClock = () => {
     }, ALARM_VISUAL_DURATION_MS);
   }, []);
 
-  const setNextAlarm = useCallback((now: Date, minute: number) => {
-    const nextAlarm = getNextAlarmTime(now, minute);
-    nextAlarmAtRef.current = nextAlarm.getTime();
-    setNextAlarmTime(nextAlarm);
-    return nextAlarm;
-  }, []);
+  const setNextAlarm = useCallback(
+    (now: Date, minuteSlots: AlarmMinuteSlots) => {
+      const nextAlarm = getNextAlarmOccurrence(now, minuteSlots);
+      nextAlarmAtRef.current = nextAlarm?.getTime() ?? null;
+      setNextAlarmTime(nextAlarm);
+      return nextAlarm;
+    },
+    []
+  );
 
   const armAlarm = useCallback(
-    (minute: number, soundId: string): Promise<void> => {
+    (minuteSlots: AlarmMinuteSlots, soundId: string): Promise<void> => {
       const version = ++armVersionRef.current;
       const scheduler = schedulerRef.current;
       const selectedOption = SOUND_OPTIONS.find(
         (option) => option.id === soundId
       );
+      const activeMinutes = getActiveAlarmMinutes(minuteSlots);
+      const armStartedAt = new Date();
+      const nextAlarm = setNextAlarm(armStartedAt, minuteSlots);
 
-      const nextAlarm = setNextAlarm(new Date(), minute);
-
-      if (!scheduler || !selectedOption) {
-        setAlarmStatus("error");
+      if (!scheduler || !selectedOption || !nextAlarm) {
+        setAlarmStatus(activeMinutes.length === 0 ? "disabled" : "error");
         return Promise.resolve();
       }
 
@@ -124,21 +134,36 @@ export const useAlarmClock = () => {
               return;
             }
 
-            const scheduledAlarmTimes = await scheduler.scheduleHourly(
-              selectedOption.file,
-              nextAlarm.getTime(),
-              AUDIO_SCHEDULE_OCCURRENCES
-            );
+            const scheduledAlarmTimes: number[] = [];
+            for (const [index, minute] of activeMinutes.entries()) {
+              const firstAlarmAt = getNextAlarmTime(
+                armStartedAt,
+                minute
+              ).getTime();
+              const occurrenceTimes =
+                index === 0
+                  ? await scheduler.scheduleHourly(
+                      selectedOption.file,
+                      firstAlarmAt,
+                      AUDIO_SCHEDULE_OCCURRENCES
+                    )
+                  : await scheduler.ensureHourlySchedule(
+                      selectedOption.file,
+                      firstAlarmAt,
+                      AUDIO_SCHEDULE_OCCURRENCES
+                    );
+              scheduledAlarmTimes.push(...occurrenceTimes);
+            }
 
             if (version !== armVersionRef.current) {
               scheduler.cancel();
               return;
             }
 
-            const firstScheduledAlarm = scheduledAlarmTimes[0];
-            if (firstScheduledAlarm === undefined) {
+            if (scheduledAlarmTimes.length === 0) {
               throw new Error("No alarm occurrence was scheduled.");
             }
+            const firstScheduledAlarm = Math.min(...scheduledAlarmTimes);
 
             nextAlarmAtRef.current = firstScheduledAlarm;
             setNextAlarmTime(new Date(firstScheduledAlarm));
@@ -161,13 +186,14 @@ export const useAlarmClock = () => {
 
   const handleAlarmBoundary = useCallback(
     (now: Date, alarmAt: number) => {
-      const minute = selectedMinuteRef.current;
+      const minuteSlots = selectedMinutesRef.current;
+      const activeMinutes = getActiveAlarmMinutes(minuteSlots);
       const soundId = selectedSoundRef.current;
       const selectedOption = SOUND_OPTIONS.find(
         (option) => option.id === soundId
       );
 
-      if (minute === null || !selectedOption) {
+      if (activeMinutes.length === 0 || !selectedOption) {
         return;
       }
 
@@ -205,7 +231,11 @@ export const useAlarmClock = () => {
           });
       }
 
-      const nextAlarm = setNextAlarm(now, minute);
+      const nextAlarm = setNextAlarm(now, minuteSlots);
+      if (!nextAlarm) {
+        return;
+      }
+      const nextAlarmAt = nextAlarm.getTime();
 
       if (
         !selectedOption.isNotification &&
@@ -221,20 +251,25 @@ export const useAlarmClock = () => {
             }
 
             try {
-              const scheduledAlarmTimes = await scheduler.ensureHourlySchedule(
-                selectedOption.file,
-                nextAlarm.getTime(),
-                AUDIO_SCHEDULE_OCCURRENCES
-              );
+              const scheduledAlarmTimes: number[] = [];
+              for (const minute of activeMinutes) {
+                const firstAlarmAt = getNextAlarmTime(now, minute).getTime();
+                const occurrenceTimes = await scheduler.ensureHourlySchedule(
+                  selectedOption.file,
+                  firstAlarmAt,
+                  AUDIO_SCHEDULE_OCCURRENCES
+                );
+                scheduledAlarmTimes.push(...occurrenceTimes);
+              }
               if (refillVersion !== armVersionRef.current) {
                 return;
               }
 
-              const firstScheduledAlarm = scheduledAlarmTimes[0];
               if (
-                firstScheduledAlarm !== undefined &&
-                !scheduler.isScheduled(nextAlarm.getTime())
+                scheduledAlarmTimes.length > 0 &&
+                !scheduler.isScheduled(nextAlarmAt)
               ) {
+                const firstScheduledAlarm = Math.min(...scheduledAlarmTimes);
                 nextAlarmAtRef.current = firstScheduledAlarm;
                 setNextAlarmTime(new Date(firstScheduledAlarm));
               }
@@ -283,9 +318,9 @@ export const useAlarmClock = () => {
   }, [checkAlarm]);
 
   useEffect(() => {
-    selectedMinuteRef.current = selectedMinute;
-    saveMinuteToStorage(selectedMinute);
-  }, [selectedMinute]);
+    selectedMinutesRef.current = selectedMinutes;
+    saveMinutesToStorage(selectedMinutes);
+  }, [selectedMinutes]);
 
   useEffect(() => {
     selectedSoundRef.current = selectedSound;
@@ -294,7 +329,7 @@ export const useAlarmClock = () => {
 
   useEffect(() => {
     const needsActivation =
-      selectedMinute !== null &&
+      getActiveAlarmMinutes(selectedMinutes).length > 0 &&
       (alarmStatus === "needs-interaction" || alarmStatus === "error");
 
     if (!needsActivation) {
@@ -303,11 +338,12 @@ export const useAlarmClock = () => {
 
     let handled = false;
     const activateFromFirstGesture = () => {
-      if (handled || selectedMinuteRef.current === null) {
+      const minuteSlots = selectedMinutesRef.current;
+      if (handled || getActiveAlarmMinutes(minuteSlots).length === 0) {
         return;
       }
       handled = true;
-      void armAlarm(selectedMinuteRef.current, selectedSoundRef.current);
+      void armAlarm(minuteSlots, selectedSoundRef.current);
     };
 
     document.addEventListener("pointerdown", activateFromFirstGesture, true);
@@ -316,7 +352,7 @@ export const useAlarmClock = () => {
       document.removeEventListener("pointerdown", activateFromFirstGesture, true);
       document.removeEventListener("keydown", activateFromFirstGesture, true);
     };
-  }, [alarmStatus, armAlarm, selectedMinute]);
+  }, [alarmStatus, armAlarm, selectedMinutes]);
 
   useEffect(() => {
     const handleResume = () => {
@@ -324,21 +360,21 @@ export const useAlarmClock = () => {
       setCurrentTime(now);
       checkAlarm(now);
 
-      const minute = selectedMinuteRef.current;
+      const minuteSlots = selectedMinutesRef.current;
       const soundId = selectedSoundRef.current;
       const selectedOption = SOUND_OPTIONS.find(
         (option) => option.id === soundId
       );
       if (
         document.visibilityState === "visible" &&
-        minute !== null &&
+        getActiveAlarmMinutes(minuteSlots).length > 0 &&
         selectedOption &&
         !selectedOption.isNotification &&
         hasUserEnabledAlarmRef.current
       ) {
         // A previously enabled context may have been suspended/closed while the
         // page was hidden. Retry it on resume; failure exposes the tap hint.
-        void armAlarm(minute, soundId);
+        void armAlarm(minuteSlots, soundId);
       }
     };
 
@@ -372,14 +408,14 @@ export const useAlarmClock = () => {
     }
 
     const unsubscribe = scheduler.onStateChange((state) => {
-      const minute = selectedMinuteRef.current;
+      const minuteSlots = selectedMinutesRef.current;
       const selectedOption = SOUND_OPTIONS.find(
         (option) => option.id === selectedSoundRef.current
       );
 
       if (
         state !== "running" &&
-        minute !== null &&
+        getActiveAlarmMinutes(minuteSlots).length > 0 &&
         selectedOption &&
         !selectedOption.isNotification &&
         hasUserEnabledAlarmRef.current
@@ -398,12 +434,23 @@ export const useAlarmClock = () => {
     };
   }, []);
 
-  const handleMinuteChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+  const handleMinuteChange = (
+    slotIndex: 0 | 1,
+    event: React.ChangeEvent<HTMLSelectElement>
+  ) => {
     const minute = parseStoredMinute(event.target.value);
-    setSelectedMinute(minute);
-    selectedMinuteRef.current = minute;
+    const minuteSlots: AlarmMinuteSlots = [...selectedMinutesRef.current];
+    const otherSlotIndex = slotIndex === 0 ? 1 : 0;
 
-    if (minute === null) {
+    if (minute !== null && minuteSlots[otherSlotIndex] === minute) {
+      return;
+    }
+
+    minuteSlots[slotIndex] = minute;
+    setSelectedMinutes(minuteSlots);
+    selectedMinutesRef.current = minuteSlots;
+
+    if (getActiveAlarmMinutes(minuteSlots).length === 0) {
       armVersionRef.current += 1;
       hasUserEnabledAlarmRef.current = false;
       schedulerRef.current?.cancel();
@@ -413,15 +460,16 @@ export const useAlarmClock = () => {
       return;
     }
 
-    void armAlarm(minute, selectedSoundRef.current);
+    void armAlarm(minuteSlots, selectedSoundRef.current);
   };
 
   const handleSoundChange = (soundId: string) => {
     setSelectedSound(soundId);
     selectedSoundRef.current = soundId;
 
-    if (selectedMinuteRef.current !== null) {
-      void armAlarm(selectedMinuteRef.current, soundId);
+    const minuteSlots = selectedMinutesRef.current;
+    if (getActiveAlarmMinutes(minuteSlots).length > 0) {
+      void armAlarm(minuteSlots, soundId);
     }
   };
 
@@ -448,7 +496,7 @@ export const useAlarmClock = () => {
 
   return {
     currentTime,
-    selectedMinute,
+    selectedMinutes,
     selectedSound,
     isAlarmPlaying,
     alarmStatus,

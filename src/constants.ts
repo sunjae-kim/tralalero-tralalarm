@@ -52,6 +52,7 @@ export const SOUND_OPTIONS: SoundOption[] = [
 ];
 
 export const STORAGE_KEYS = {
+  SELECTED_MINUTES: "tralalarm-selected-minutes",
   SELECTED_MINUTE: "tralalarm-selected-minute",
   SELECTED_SOUND: "tralalarm-selected-sound",
 } as const;

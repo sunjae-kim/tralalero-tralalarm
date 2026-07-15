@@ -1,15 +1,19 @@
 import { format } from "date-fns";
-import { parseStoredMinute } from "./alarmTime";
+import {
+  AlarmMinuteSlots,
+  parseStoredAlarmMinutes,
+} from "./alarmMinutes";
 import { SOUND_OPTIONS, STORAGE_KEYS } from "./constants";
 
 // localStorage helper functions
-export const getStoredMinute = (): number | null => {
+export const getStoredMinutes = (): AlarmMinuteSlots => {
   try {
-    return parseStoredMinute(
+    return parseStoredAlarmMinutes(
+      localStorage.getItem(STORAGE_KEYS.SELECTED_MINUTES),
       localStorage.getItem(STORAGE_KEYS.SELECTED_MINUTE)
     );
   } catch {
-    return null;
+    return [null, null];
   }
 };
 
@@ -24,15 +28,19 @@ export const getStoredSound = (): string => {
   }
 };
 
-export const saveMinuteToStorage = (minute: number | null): void => {
+export const saveMinutesToStorage = (minutes: AlarmMinuteSlots): void => {
   try {
-    if (minute !== null) {
-      localStorage.setItem(STORAGE_KEYS.SELECTED_MINUTE, minute.toString());
+    if (minutes.some((minute) => minute !== null)) {
+      localStorage.setItem(
+        STORAGE_KEYS.SELECTED_MINUTES,
+        JSON.stringify(minutes)
+      );
     } else {
-      localStorage.removeItem(STORAGE_KEYS.SELECTED_MINUTE);
+      localStorage.removeItem(STORAGE_KEYS.SELECTED_MINUTES);
     }
+    localStorage.removeItem(STORAGE_KEYS.SELECTED_MINUTE);
   } catch (error) {
-    console.warn("Failed to save selected minute to localStorage:", error);
+    console.warn("Failed to save selected minutes to localStorage:", error);
   }
 };
 
