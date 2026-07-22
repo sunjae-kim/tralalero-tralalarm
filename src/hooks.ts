@@ -10,6 +10,10 @@ import {
   getNextAlarmOccurrence,
 } from "./alarmMinutes";
 import { AudioAlarmScheduler } from "./audioAlarmScheduler";
+import type {
+  AlarmWorkerCommand,
+  AlarmWorkerWakeMessage,
+} from "./alarmWorkerController";
 import { AlarmStatus } from "./alarmStatus";
 import { SOUND_OPTIONS } from "./constants";
 import {
@@ -43,6 +47,7 @@ export const useAlarmClock = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const schedulerRef = useRef<AudioAlarmScheduler | null>(null);
+  const alarmWorkerRef = useRef<Worker | null>(null);
   const selectedMinutesRef = useRef(selectedMinutes);
   const selectedSoundRef = useRef(selectedSound);
   const nextAlarmAtRef = useRef<number | null>(
@@ -69,14 +74,25 @@ export const useAlarmClock = () => {
     }, ALARM_VISUAL_DURATION_MS);
   }, []);
 
+  const updateNextAlarm = useCallback((nextAlarm: Date | null) => {
+    const alarmAt = nextAlarm?.getTime() ?? null;
+    nextAlarmAtRef.current = alarmAt;
+    setNextAlarmTime(nextAlarm);
+
+    const command: AlarmWorkerCommand =
+      alarmAt === null
+        ? { type: "cancel" }
+        : { type: "schedule", alarmAt };
+    alarmWorkerRef.current?.postMessage(command);
+  }, []);
+
   const setNextAlarm = useCallback(
     (now: Date, minuteSlots: AlarmMinuteSlots) => {
       const nextAlarm = getNextAlarmOccurrence(now, minuteSlots);
-      nextAlarmAtRef.current = nextAlarm?.getTime() ?? null;
-      setNextAlarmTime(nextAlarm);
+      updateNextAlarm(nextAlarm);
       return nextAlarm;
     },
-    []
+    [updateNextAlarm]
   );
 
   const armAlarm = useCallback(
@@ -165,8 +181,7 @@ export const useAlarmClock = () => {
             }
             const firstScheduledAlarm = Math.min(...scheduledAlarmTimes);
 
-            nextAlarmAtRef.current = firstScheduledAlarm;
-            setNextAlarmTime(new Date(firstScheduledAlarm));
+            updateNextAlarm(new Date(firstScheduledAlarm));
             hasUserEnabledAlarmRef.current = true;
             setAlarmStatus("ready");
           } catch (error) {
@@ -181,7 +196,7 @@ export const useAlarmClock = () => {
       armQueueRef.current = operation;
       return operation;
     },
-    [setNextAlarm]
+    [setNextAlarm, updateNextAlarm]
   );
 
   const handleAlarmBoundary = useCallback(
@@ -270,8 +285,7 @@ export const useAlarmClock = () => {
                 !scheduler.isScheduled(nextAlarmAt)
               ) {
                 const firstScheduledAlarm = Math.min(...scheduledAlarmTimes);
-                nextAlarmAtRef.current = firstScheduledAlarm;
-                setNextAlarmTime(new Date(firstScheduledAlarm));
+                updateNextAlarm(new Date(firstScheduledAlarm));
               }
             } catch (error) {
               if (refillVersion !== armVersionRef.current) {
@@ -284,8 +298,51 @@ export const useAlarmClock = () => {
         armQueueRef.current = refillOperation;
       }
     },
-    [setNextAlarm, showAlarmVisual]
+    [setNextAlarm, showAlarmVisual, updateNextAlarm]
   );
+
+  useEffect(() => {
+    if (typeof Worker === "undefined") {
+      return;
+    }
+
+    const worker = new Worker(new URL("./alarmWorker.ts", import.meta.url), {
+      type: "module",
+    });
+    alarmWorkerRef.current = worker;
+    worker.onmessage = (event: MessageEvent<AlarmWorkerWakeMessage>) => {
+      const message = event.data;
+      if (
+        message.type !== "wake" ||
+        !Number.isFinite(message.alarmAt) ||
+        nextAlarmAtRef.current !== message.alarmAt
+      ) {
+        return;
+      }
+
+      const now = new Date(message.now);
+      setCurrentTime(now);
+      handleAlarmBoundary(now, message.alarmAt);
+    };
+    worker.onerror = (event) => {
+      console.warn("Alarm background worker failed:", event.message);
+    };
+
+    const alarmAt = nextAlarmAtRef.current;
+    if (alarmAt !== null) {
+      const command: AlarmWorkerCommand = { type: "schedule", alarmAt };
+      worker.postMessage(command);
+    }
+
+    return () => {
+      const command: AlarmWorkerCommand = { type: "cancel" };
+      worker.postMessage(command);
+      worker.terminate();
+      if (alarmWorkerRef.current === worker) {
+        alarmWorkerRef.current = null;
+      }
+    };
+  }, [handleAlarmBoundary]);
 
   const checkAlarm = useCallback(
     (now: Date) => {
@@ -454,8 +511,7 @@ export const useAlarmClock = () => {
       armVersionRef.current += 1;
       hasUserEnabledAlarmRef.current = false;
       schedulerRef.current?.cancel();
-      nextAlarmAtRef.current = null;
-      setNextAlarmTime(null);
+      updateNextAlarm(null);
       setAlarmStatus("disabled");
       return;
     }
