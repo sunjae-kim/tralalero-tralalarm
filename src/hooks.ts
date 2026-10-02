@@ -199,6 +199,74 @@ export const useAlarmClock = () => {
     [setNextAlarm, updateNextAlarm]
   );
 
+  const refillAudioSchedule = useCallback(
+    (now: Date) => {
+      const scheduler = schedulerRef.current;
+      const activeMinutes = getActiveAlarmMinutes(selectedMinutesRef.current);
+      const selectedOption = SOUND_OPTIONS.find(
+        (option) => option.id === selectedSoundRef.current
+      );
+      if (
+        !scheduler ||
+        !selectedOption ||
+        selectedOption.isNotification ||
+        !hasUserEnabledAlarmRef.current ||
+        activeMinutes.length === 0
+      ) {
+        return;
+      }
+      const refillVersion = armVersionRef.current;
+      armQueueRef.current = armQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          if (
+            refillVersion !== armVersionRef.current ||
+            scheduler.state !== "running"
+          ) {
+            return;
+          }
+          try {
+            const scheduledAlarmTimes: number[] = [];
+            for (const minute of activeMinutes) {
+              const firstAlarmAt = getNextAlarmTime(now, minute).getTime();
+              const occurrenceTimes = await scheduler.ensureHourlySchedule(
+                selectedOption.file,
+                firstAlarmAt,
+                AUDIO_SCHEDULE_OCCURRENCES
+              );
+              scheduledAlarmTimes.push(...occurrenceTimes);
+            }
+            if (refillVersion !== armVersionRef.current) {
+              return;
+            }
+            const nextAlarmAt = nextAlarmAtRef.current;
+            if (
+              nextAlarmAt !== null &&
+              scheduledAlarmTimes.length > 0 &&
+              !scheduler.isScheduled(nextAlarmAt)
+            ) {
+              updateNextAlarm(new Date(Math.min(...scheduledAlarmTimes)));
+            }
+            const confirmedNextAlarm = nextAlarmAtRef.current;
+            if (
+              scheduler.state === "running" &&
+              confirmedNextAlarm !== null &&
+              scheduler.isScheduled(confirmedNextAlarm)
+            ) {
+              setAlarmStatus("ready");
+            }
+          } catch (error) {
+            if (refillVersion !== armVersionRef.current) {
+              return;
+            }
+            console.warn("Failed to refill alarm schedule:", error);
+            setAlarmStatus("needs-interaction");
+          }
+        });
+    },
+    [updateNextAlarm]
+  );
+
   const handleAlarmBoundary = useCallback(
     (now: Date, alarmAt: number) => {
       const minuteSlots = selectedMinutesRef.current;
@@ -214,6 +282,10 @@ export const useAlarmClock = () => {
 
       const lateness = now.getTime() - alarmAt;
       const scheduler = schedulerRef.current;
+      scheduler?.reconcileClock();
+      if (lateness < 0) {
+        return;
+      }
       const wasScheduledByAudioClock =
         scheduler?.state === "running" && scheduler.isScheduled(alarmAt);
 
@@ -246,59 +318,11 @@ export const useAlarmClock = () => {
           });
       }
 
-      const nextAlarm = setNextAlarm(now, minuteSlots);
-      if (!nextAlarm) {
-        return;
-      }
-      const nextAlarmAt = nextAlarm.getTime();
-
-      if (
-        !selectedOption.isNotification &&
-        scheduler &&
-        hasUserEnabledAlarmRef.current
-      ) {
-        const refillVersion = armVersionRef.current;
-        const refillOperation = armQueueRef.current
-          .catch(() => undefined)
-          .then(async () => {
-            if (refillVersion !== armVersionRef.current) {
-              return;
-            }
-
-            try {
-              const scheduledAlarmTimes: number[] = [];
-              for (const minute of activeMinutes) {
-                const firstAlarmAt = getNextAlarmTime(now, minute).getTime();
-                const occurrenceTimes = await scheduler.ensureHourlySchedule(
-                  selectedOption.file,
-                  firstAlarmAt,
-                  AUDIO_SCHEDULE_OCCURRENCES
-                );
-                scheduledAlarmTimes.push(...occurrenceTimes);
-              }
-              if (refillVersion !== armVersionRef.current) {
-                return;
-              }
-
-              if (
-                scheduledAlarmTimes.length > 0 &&
-                !scheduler.isScheduled(nextAlarmAt)
-              ) {
-                const firstScheduledAlarm = Math.min(...scheduledAlarmTimes);
-                updateNextAlarm(new Date(firstScheduledAlarm));
-              }
-            } catch (error) {
-              if (refillVersion !== armVersionRef.current) {
-                return;
-              }
-              console.warn("Failed to refill alarm schedule:", error);
-              setAlarmStatus("needs-interaction");
-            }
-          });
-        armQueueRef.current = refillOperation;
+      if (setNextAlarm(now, minuteSlots)) {
+        refillAudioSchedule(now);
       }
     },
-    [setNextAlarm, showAlarmVisual, updateNextAlarm]
+    [refillAudioSchedule, setNextAlarm, showAlarmVisual]
   );
 
   useEffect(() => {
@@ -320,7 +344,9 @@ export const useAlarmClock = () => {
         return;
       }
 
-      const now = new Date(message.now);
+      // Worker delivery can itself be queued while the page is frozen. Use the
+      // main thread's actual delivery time, not the worker's earlier wake time.
+      const now = new Date();
       setCurrentTime(now);
       handleAlarmBoundary(now, message.alarmAt);
     };
@@ -346,6 +372,7 @@ export const useAlarmClock = () => {
 
   const checkAlarm = useCallback(
     (now: Date) => {
+      schedulerRef.current?.reconcileClock();
       const nowMs = now.getTime();
       const alarmAt = nextAlarmAtRef.current;
 
@@ -429,19 +456,25 @@ export const useAlarmClock = () => {
         !selectedOption.isNotification &&
         hasUserEnabledAlarmRef.current
       ) {
-        // A previously enabled context may have been suspended/closed while the
-        // page was hidden. Retry it on resume; failure exposes the tap hint.
-        void armAlarm(minuteSlots, soundId);
+        if (schedulerRef.current?.state === "running") {
+          // Retain valid near-boundary sources; only repair drift and refill.
+          refillAudioSchedule(now);
+        } else {
+          // Retry a suspended/closed context; failure exposes the tap hint.
+          void armAlarm(minuteSlots, soundId);
+        }
       }
     };
 
     document.addEventListener("visibilitychange", handleResume);
+    document.addEventListener("resume", handleResume);
     window.addEventListener("pageshow", handleResume);
     return () => {
       document.removeEventListener("visibilitychange", handleResume);
+      document.removeEventListener("resume", handleResume);
       window.removeEventListener("pageshow", handleResume);
     };
-  }, [armAlarm, checkAlarm]);
+  }, [armAlarm, checkAlarm, refillAudioSchedule]);
 
   useEffect(() => {
     const currentAudio = audioRef.current;
@@ -464,20 +497,36 @@ export const useAlarmClock = () => {
       return;
     }
 
+    let previousState = scheduler.state;
     const unsubscribe = scheduler.onStateChange((state) => {
+      const resumed = state === "running" && previousState !== "running";
+      previousState = state;
       const minuteSlots = selectedMinutesRef.current;
       const selectedOption = SOUND_OPTIONS.find(
         (option) => option.id === selectedSoundRef.current
       );
 
       if (
-        state !== "running" &&
         getActiveAlarmMinutes(minuteSlots).length > 0 &&
         selectedOption &&
         !selectedOption.isNotification &&
         hasUserEnabledAlarmRef.current
       ) {
-        setAlarmStatus("needs-interaction");
+        if (state !== "running") {
+          setAlarmStatus("needs-interaction");
+        } else if (resumed) {
+          const now = new Date();
+          setCurrentTime(now);
+          checkAlarm(now);
+          // Refill both families without cancelling a valid imminent source.
+          refillAudioSchedule(now);
+          const alarmAt = nextAlarmAtRef.current;
+          setAlarmStatus(
+            alarmAt !== null && scheduler.isScheduled(alarmAt)
+              ? "ready"
+              : "arming"
+          );
+        }
       }
     });
 
@@ -489,7 +538,7 @@ export const useAlarmClock = () => {
       }
       void scheduler.dispose();
     };
-  }, []);
+  }, [checkAlarm, refillAudioSchedule]);
 
   const handleMinuteChange = (
     slotIndex: 0 | 1,

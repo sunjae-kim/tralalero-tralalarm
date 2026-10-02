@@ -168,6 +168,98 @@ describe("AudioAlarmScheduler", () => {
     expect(disconnected).toHaveBeenCalledTimes(2);
   });
 
+  it("realigns both minute families after the audio clock resumes", async () => {
+    const { clock, context, scheduler, startedAt, stopped } = createHarness();
+    const firstAlarmAt = 1_030_000;
+    const secondAlarmAt = 1_060_000;
+    await scheduler.enable();
+    await scheduler.scheduleHourly("/sound/alarm.wav", firstAlarmAt, 2);
+    await scheduler.ensureHourlySchedule("/sound/alarm.wav", secondAlarmAt, 1);
+
+    clock.now += 10_000;
+    context.currentTime += 10;
+    context.state = "suspended";
+    context.onstatechange?.();
+    expect(scheduler.isScheduled(firstAlarmAt)).toBe(false);
+
+    clock.now += 15_000;
+    context.state = "running";
+    context.onstatechange?.();
+
+    expect(stopped).toHaveBeenCalledTimes(3);
+    expect(startedAt.slice(3)).toEqual([27.5, 3_627.5, 57.5]);
+    expect(scheduler.isScheduled(firstAlarmAt)).toBe(true);
+    expect(scheduler.isScheduled(secondAlarmAt)).toBe(true);
+  });
+
+  it("drops an unstarted overdue source while retaining both future families", async () => {
+    const { clock, context, scheduler, startedAt, stopped } = createHarness();
+    await scheduler.enable();
+    await scheduler.scheduleHourly("/sound/alarm.wav", 1_030_000, 2);
+    await scheduler.ensureHourlySchedule("/sound/alarm.wav", 1_090_000, 1);
+    context.state = "suspended";
+    context.onstatechange?.();
+    clock.now += 75_000;
+    context.state = "running";
+    context.onstatechange?.();
+
+    expect(stopped).toHaveBeenCalledTimes(3);
+    expect(startedAt.slice(3)).toEqual([3_567.5, 27.5]);
+    expect(scheduler.isScheduled(1_030_000)).toBe(false);
+    expect(scheduler.isScheduled(1_090_000)).toBe(true);
+    expect(scheduler.isScheduled(4_630_000)).toBe(true);
+  });
+
+  it("preserves confirmation of an already-started occurrence during drift repair", async () => {
+    const { clock, context, scheduler, startedAt } = createHarness();
+    await scheduler.enable();
+    await scheduler.scheduleHourly("/sound/alarm.wav", 1_030_000, 2);
+    clock.now += 45_000;
+    context.currentTime += 35;
+    scheduler.reconcileClock();
+
+    expect(scheduler.isScheduled(1_030_000)).toBe(true);
+    expect(startedAt.slice(2)).toEqual([3_632.5]);
+  });
+
+  it("does not churn sources for normal sub-quantum clock sampling jitter", async () => {
+    const { clock, scheduler, startedAt, stopped } = createHarness();
+    await scheduler.enable();
+    await scheduler.scheduleHourly("/sound/alarm.wav", 1_030_000, 2);
+    clock.now += 5;
+    scheduler.reconcileClock();
+    expect(stopped).not.toHaveBeenCalled();
+    expect(startedAt).toEqual([42.5, 3_642.5]);
+  });
+
+  it("checks silent audio-clock drift before refilling existing sources", async () => {
+    const { clock, scheduler, startedAt, stopped } = createHarness();
+    await scheduler.enable();
+    await scheduler.scheduleHourly("/sound/alarm.wav", 1_030_000, 2);
+    clock.now += 10_000;
+
+    await scheduler.ensureHourlySchedule("/sound/alarm.wav", 1_030_000, 2);
+
+    expect(stopped).toHaveBeenCalledTimes(2);
+    expect(startedAt.slice(2)).toEqual([32.5, 3_632.5]);
+  });
+
+  it("does not resurrect a cancelled schedule when sound loading finishes", async () => {
+    const { fetchArrayBuffer, scheduler, startedAt } = createHarness();
+    let finishLoad: ((data: ArrayBuffer) => void) | undefined;
+    fetchArrayBuffer.mockImplementationOnce(
+      () => new Promise<ArrayBuffer>((resolve) => { finishLoad = resolve; })
+    );
+    await scheduler.enable();
+    const operation = scheduler.scheduleHourly("/sound/alarm.wav", 1_030_000, 1);
+    const rejected = expect(operation).rejects.toThrow("replaced while loading");
+    scheduler.cancel();
+    finishLoad?.(new ArrayBuffer(8));
+    await rejected;
+    expect(startedAt).toEqual([]);
+    expect(scheduler.isScheduled(1_030_000)).toBe(false);
+  });
+
   it("reports AudioContext lifecycle state changes", async () => {
     const { context, scheduler } = createHarness();
     const listener = vi.fn();
