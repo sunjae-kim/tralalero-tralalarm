@@ -1,3 +1,5 @@
+import { withAlarmSetupTimeout } from "./alarmSetup";
+
 const HOUR_MS = 60 * 60 * 1_000;
 const CLOCK_DRIFT_TOLERANCE_MS = 250;
 
@@ -129,7 +131,7 @@ export class AudioAlarmScheduler {
     }
 
     if (this.context.state !== "running") {
-      await this.context.resume();
+      await withAlarmSetupTimeout(this.context.resume());
     }
 
     this.reconcileClock();
@@ -269,8 +271,11 @@ export class AudioAlarmScheduler {
       return cachedBuffer;
     }
 
-    const soundData = await this.fetchArrayBuffer(soundUrl);
-    const buffer = await context.decodeAudioData(soundData);
+    const buffer = await withAlarmSetupTimeout(
+      this.fetchArrayBuffer(soundUrl).then((soundData) =>
+        context.decodeAudioData(soundData)
+      )
+    );
     this.buffers.set(soundUrl, buffer);
     return buffer;
   }

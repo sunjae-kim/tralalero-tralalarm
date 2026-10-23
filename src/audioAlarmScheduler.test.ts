@@ -63,6 +63,80 @@ const createHarness = () => {
 };
 
 describe("AudioAlarmScheduler", () => {
+  it("bounds a never-resolving audio activation and allows retry", async () => {
+    vi.useFakeTimers();
+    try {
+      const { context, scheduler } = createHarness();
+      context.state = "suspended";
+      context.resume.mockImplementationOnce(() => new Promise<void>(() => {}));
+      let outcome = "pending";
+      void scheduler.enable().then(
+        () => {
+          outcome = "ready";
+        },
+        (error: Error) => {
+          outcome = error.message;
+        }
+      );
+
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(outcome).toMatch(/timed out/);
+      expect(scheduler.isReady).toBe(false);
+      await scheduler.enable();
+      expect(scheduler.isReady).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["fetch", "decode"] as const)(
+    "bounds a stalled sound %s without scheduling it after retry",
+    async (stage) => {
+      vi.useFakeTimers();
+      try {
+        const { context, fetchArrayBuffer, scheduler, startedAt } = createHarness();
+        let finish: (() => void) | undefined;
+        if (stage === "fetch") {
+          fetchArrayBuffer.mockImplementationOnce(
+            () => new Promise<ArrayBuffer>((resolve) => {
+              finish = () => resolve(new ArrayBuffer(8));
+            })
+          );
+        } else {
+          context.decodeAudioData.mockImplementationOnce(
+            () => new Promise<AudioBuffer>((resolve) => {
+              finish = () => resolve({ duration: 1 } as AudioBuffer);
+            })
+          );
+        }
+        await scheduler.enable();
+        let outcome = "pending";
+        void scheduler.scheduleHourly("/sound/stalled.wav", 1_030_000, 1).then(
+          () => {
+            outcome = "scheduled";
+          },
+          (error: Error) => {
+            outcome = error.message;
+          }
+        );
+
+        await vi.advanceTimersByTimeAsync(10_001);
+        expect(outcome).toMatch(/timed out/);
+        expect(scheduler.isScheduled(1_030_000)).toBe(false);
+        await scheduler.scheduleHourly("/sound/retry.wav", 1_060_000, 1);
+        finish?.();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(startedAt).toHaveLength(1);
+        expect(scheduler.isScheduled(1_030_000)).toBe(false);
+        expect(scheduler.isScheduled(1_060_000)).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  );
+
   it("uses the Web Audio clock to schedule exact hourly start times", async () => {
     const { scheduler, startedAt } = createHarness();
 

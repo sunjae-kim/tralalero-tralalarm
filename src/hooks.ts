@@ -421,7 +421,15 @@ export const useAlarmClock = () => {
     }
 
     let handled = false;
-    const activateFromFirstGesture = () => {
+    const activateFromFirstGesture = (event: MouseEvent | KeyboardEvent) => {
+      if (
+        !event.isTrusted ||
+        navigator.userActivation?.isActive === false ||
+        ("key" in event &&
+          (event.key === "Escape" || event.ctrlKey || event.metaKey))
+      ) {
+        return;
+      }
       const minuteSlots = selectedMinutesRef.current;
       if (handled || getActiveAlarmMinutes(minuteSlots).length === 0) {
         return;
@@ -430,10 +438,10 @@ export const useAlarmClock = () => {
       void armAlarm(minuteSlots, selectedSoundRef.current);
     };
 
-    document.addEventListener("pointerdown", activateFromFirstGesture, true);
+    document.addEventListener("click", activateFromFirstGesture, true);
     document.addEventListener("keydown", activateFromFirstGesture, true);
     return () => {
-      document.removeEventListener("pointerdown", activateFromFirstGesture, true);
+      document.removeEventListener("click", activateFromFirstGesture, true);
       document.removeEventListener("keydown", activateFromFirstGesture, true);
     };
   }, [alarmStatus, armAlarm, selectedMinutes]);
